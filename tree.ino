@@ -21,10 +21,6 @@ FASTLED_USING_NAMESPACE;
 
 #include "GradientPalettes.h"
 
-#include "application.h"
-
-SYSTEM_THREAD(ENABLED);
-
 // allow us to use itoa() in this scope
 extern char* itoa(int a, char* buffer, unsigned char radix);
 
@@ -33,6 +29,7 @@ extern char* itoa(int a, char* buffer, unsigned char radix);
 #define ONE_DAY_MILLIS (24 * 60 * 60 * 1000)
 
 #define NUM_LEDS 50
+#define LED_PIN  11
 
 static const int numLeds = NUM_LEDS;
 
@@ -54,37 +51,13 @@ typedef SimplePattern SimplePatternList[];
 typedef struct { SimplePattern drawFrame;  String name; } PatternAndName;
 typedef PatternAndName PatternAndNameList[];
 
-// List of patterns to cycle through.  Each is defined as a separate function below.
 
-const PatternAndNameList patterns =
-{
-  { classicTwinkles,        "Classic Twinkles" },
-  { twinkleFox,             "TwinkleFOX" },
-  { snowTwinkles,           "Snow Twinkles" },
-  { incandescentTwinkles,   "Incandescent Twinkles" },
-  { cloudTwinkles,          "Cloud Twinkles" },
-  { colorWaves,             "Color Waves" },
-  { water,                  "Water" },
-  { pride,                  "Pride" },
-  { rainbowTwinkles,        "Rainbow Twinkles" },
-  { rainbow,                "Rainbow" },
-  { rainbowWithGlitter,     "Rainbow With Glitter" },
-  { rainbowSolid,           "Solid Rainbow" },
-  { confetti,               "Confetti" },
-  { sinelon,                "Sinelon" },
-  { bpm,                    "Beat" },
-  { juggle,                 "Juggle" },
-  { fire,                   "Fire" },
-  { draw,                   "Draw" },
-  { showSolidColor,         "Solid Color" }
-};
+int patternCount = 0;
 
-int patternCount = ARRAY_SIZE(patterns);
 
 // variables exposed via Particle cloud API (Spark Core is limited to 10)
 int brightness = 32;
 int patternIndex = 0;
-String patternNames = "";
 int power = 1;
 int r = 0;
 int g = 0;
@@ -120,248 +93,8 @@ CRGBPalette16 targetPalette = palettes[paletteIndex];
 // ten seconds per color palette makes a good demo
 // 20-120 is better for deployment
 #define SECONDS_PER_PALETTE 10
+#define SECONDS_PER_PATTERN 120
 
-void setup()
-{
-    FastLED.addLeds<WS2811, TX>(leds, NUM_LEDS);
-    FastLED.setCorrection(Typical8mmPixel);
-    FastLED.setBrightness(brightness);
-    FastLED.setDither(false);
-    fill_solid(leds, NUM_LEDS, CRGB::Black);
-    FastLED.show();
-
-    // Serial.begin(9600);
-
-    // load settings from EEPROM
-    brightness = EEPROM.read(0);
-    if(brightness < 1)
-      brightness = 1;
-    else if(brightness > 255)
-      brightness = 255;
-
-    FastLED.setBrightness(brightness);
-    FastLED.setDither(brightness < 255);
-
-    patternIndex = EEPROM.read(1);
-    if(patternIndex < 0)
-      patternIndex = 0;
-    else if (patternIndex >= patternCount)
-      patternIndex = patternCount - 1;
-
-    r = EEPROM.read(2);
-    g = EEPROM.read(3);
-    b = EEPROM.read(4);
-
-    if(r == 0 && g == 0 && b == 0) {
-      r = 0;
-      g = 0;
-      b = 255;
-    }
-
-    solidColor = CRGB(r, b, g);
-
-    Particle.function("patternIndex", setPatternIndex); // sets the current pattern index, changes to the pattern with the specified index
-    Particle.function("variable", setVariable); // sets the value of a variable, args are name:value
-
-    Particle.variable("power", power);
-    Particle.variable("brightness", brightness);
-    Particle.variable("patternIndex", patternIndex);
-    Particle.variable("r", r);
-    Particle.variable("g", g);
-    Particle.variable("b", b);
-    Particle.variable("numLeds", numLeds);
-
-    patternNames = "[";
-    for(uint8_t i = 0; i < patternCount; i++)
-    {
-      patternNames.concat("\"");
-      patternNames.concat(patterns[i].name);
-      patternNames.concat("\"");
-      if(i < patternCount - 1)
-        patternNames.concat(",");
-    }
-    patternNames.concat("]");
-    Particle.variable("patternNames", patternNames);
-}
-
-void loop()
-{
-    if(power < 1) {
-        fill_solid(leds, NUM_LEDS, CRGB::Black);
-        FastLED.show();
-        FastLED.delay(15);
-        return;
-    }
-
-    uint8_t delay = patterns[patternIndex].drawFrame();
-
-    // send the 'leds' array out to the actual LED strip
-    FastLED.show();
-
-    // insert a delay to keep the framerate modest
-    FastLED.delay(delay);
-
-    // blend the current palette to the next
-    EVERY_N_MILLISECONDS(40) {
-        nblendPaletteTowardPalette(currentPalette, targetPalette, 16);
-    }
-
-    EVERY_N_MILLISECONDS( 40 ) { gHue++; } // slowly cycle the "base color" through the rainbow/palette
-
-    // slowly change to a new palette
-    EVERY_N_SECONDS(SECONDS_PER_PALETTE) {
-      paletteIndex++;
-      if (paletteIndex >= paletteCount) paletteIndex = 0;
-      targetPalette = palettes[paletteIndex];
-    };
-}
-
-int setVariable(String args)
-{
-    if(args.startsWith("pwr:")) { // pwr: 1
-        return setPower(args.substring(4));
-    }
-    else if (args.startsWith("brt:")) { // brt: 255
-        return setBrightness(args.substring(4));
-    }
-    else if (args.startsWith("r:")) { // r: 255
-        r = parseByte(args.substring(2));
-        solidColor.r = r;
-        EEPROM.write(2, r);
-        patternIndex = patternCount - 1;
-        return r;
-    }
-    else if (args.startsWith("g:")) { // g: 255
-        g = parseByte(args.substring(2));
-        solidColor.g = g;
-        EEPROM.write(3, g);
-        patternIndex = patternCount - 1;
-        return g;
-    }
-    else if (args.startsWith("b:")) { // b: 255
-        b = parseByte(args.substring(2));
-        solidColor.b = b;
-        EEPROM.write(4, b);
-        patternIndex = patternCount - 1;
-        return b;
-    }
-    else if (args.startsWith("c:")) { // c:255,255,255
-      return setColor(args.substring(2));
-    }
-    else if (args.startsWith("i:")) { // i:19,255,255,255
-      return setPixel(args.substring(2));
-    }
-
-    return -1;
-}
-
-int setPower(String args)
-{
-    power = args.toInt();
-    if(power < 0)
-        power = 0;
-    else if (power > 1)
-        power = 1;
-
-    return power;
-}
-
-int setBrightness(String args)
-{
-    brightness = args.toInt();
-    if(brightness < 1)
-        brightness = 1;
-    else if(brightness > 255)
-        brightness = 255;
-
-    FastLED.setBrightness(brightness);
-    FastLED.setDither(brightness < 255);
-
-    EEPROM.write(0, brightness);
-
-    return brightness;
-}
-
-int setColor(String args)
-{
-  char inputStr[12];
-  args.toCharArray(inputStr, 12);
-
-  char *p = strtok(inputStr, ",");
-  r = atoi(p);
-
-  p = strtok(NULL,",");
-  g = atoi(p);
-
-  p = strtok(NULL,",");
-  b = atoi(p);
-
-  p = strtok(NULL,",");
-
-  solidColor.r = r;
-  solidColor.g = g;
-  solidColor.b = b;
-
-  patternIndex = patternCount - 1;
-
-  EEPROM.write(2, r);
-  EEPROM.write(3, g);
-  EEPROM.write(4, b);
-
-  return 0;
-}
-
-int setPixel(String args)
-{
-  char inputStr[16];
-  args.toCharArray(inputStr, 16);
-
-  char *p = strtok(inputStr, ",");
-  int i = atoi(p);
-
-  p = strtok(NULL,",");
-  int ir = atoi(p);
-
-  p = strtok(NULL,",");
-  int ig = atoi(p);
-
-  p = strtok(NULL,",");
-  int ib = atoi(p);
-
-  p = strtok(NULL,",");
-
-  if(i < NUM_LEDS) {
-    leds[i] = CRGB(ir, ig, ib);
-    patternIndex = patternCount - 2;
-    return 0;
-  }
-
-  return -1;
-}
-
-byte parseByte(String args)
-{
-    int c = args.toInt();
-    if(c < 0)
-        c = 0;
-    else if (c > 255)
-        c = 255;
-
-    return c;
-}
-
-int setPatternIndex(String args)
-{
-    patternIndex = args.toInt();
-    if(patternIndex < 0)
-        patternIndex = 0;
-    else if (patternIndex >= patternCount)
-        patternIndex = patternCount - 1;
-
-    EEPROM.write(1, patternIndex);
-
-    return patternIndex;
-}
 
 // Patterns from FastLED example DemoReel100: https://github.com/FastLED/FastLED/blob/master/examples/DemoReel100/DemoReel100.ino
 
@@ -452,32 +185,6 @@ uint8_t juggle()
   return 0;
 }
 
-uint8_t fire()
-{
-    heatMap(HeatColors_p, true);
-
-    return 30;
-}
-
-uint8_t water()
-{
-    heatMap(IceColors_p, false);
-
-    return 30;
-}
-
-uint8_t draw()
-{
-    return 30;
-}
-
-uint8_t showSolidColor()
-{
-    fill_solid(leds, NUM_LEDS, solidColor);
-
-    return 30;
-}
-
 // Pride2015 by Mark Kriegsman: https://gist.github.com/kriegsman/964de772d64c502760e5
 // This function draws rainbows with an ever-changing,
 // widely-varying set of parameters.
@@ -534,67 +241,6 @@ uint8_t radialPaletteShift()
   return 8;
 }
 
-// based on FastLED example Fire2012WithPalette: https://github.com/FastLED/FastLED/blob/master/examples/Fire2012WithPalette/Fire2012WithPalette.ino
-void heatMap(CRGBPalette16 palette, bool up)
-{
-    fill_solid(leds, NUM_LEDS, CRGB::Black);
-
-    // Add entropy to random number generator; we use a lot of it.
-    random16_add_entropy(random(256));
-
-    uint8_t cooling = 55;
-    uint8_t sparking = 120;
-
-    // Array of temperature readings at each simulation cell
-    static const uint8_t halfLedCount = NUM_LEDS / 2;
-    static byte heat[2][halfLedCount];
-
-    byte colorindex;
-
-    for(uint8_t x = 0; x < 2; x++) {
-        // Step 1.  Cool down every cell a little
-        for( int i = 0; i < halfLedCount; i++) {
-          heat[x][i] = qsub8( heat[x][i],  random8(0, ((cooling * 10) / halfLedCount) + 2));
-        }
-
-        // Step 2.  Heat from each cell drifts 'up' and diffuses a little
-        for( int k= halfLedCount - 1; k >= 2; k--) {
-          heat[x][k] = (heat[x][k - 1] + heat[x][k - 2] + heat[x][k - 2] ) / 3;
-        }
-
-        // Step 3.  Randomly ignite new 'sparks' of heat near the bottom
-        if( random8() < sparking ) {
-          int y = random8(7);
-          heat[x][y] = qadd8( heat[x][y], random8(160,255) );
-        }
-
-        // Step 4.  Map from heat cells to LED colors
-        for( int j = 0; j < halfLedCount; j++) {
-            // Scale the heat value from 0-255 down to 0-240
-            // for best results with color palettes.
-            colorindex = scale8(heat[x][j], 240);
-
-            CRGB color = ColorFromPalette(palette, colorindex);
-
-            if(up) {
-                if(x == 0) {
-                    leds[(halfLedCount - 1) - j] = color;
-                }
-                else {
-                    leds[halfLedCount + j] = color;
-                }
-            }
-            else {
-                if(x == 0) {
-                    leds[j] = color;
-                }
-                else {
-                    leds[(NUM_LEDS - 1) - j] = color;
-                }
-            }
-        }
-    }
-}
 
 // scale the brightness of all pixels down
 void dimAll(byte value)
@@ -763,6 +409,108 @@ void colortwinkles()
       setPixelDirection(pos, GETTING_BRIGHTER);
     }
   }
+}
+
+
+// List of patterns to cycle through.  Each is defined as a separate function below.
+
+const PatternAndNameList patterns =
+{
+  { classicTwinkles,        "Classic Twinkles" },
+  { twinkleFox,             "TwinkleFOX" },
+  { snowTwinkles,           "Snow Twinkles" },
+  { incandescentTwinkles,   "Incandescent Twinkles" },
+  { cloudTwinkles,          "Cloud Twinkles" },
+  { colorWaves,             "Color Waves" },
+  { pride,                  "Pride" },
+  { rainbowTwinkles,        "Rainbow Twinkles" },
+  { rainbow,                "Rainbow" },
+  { rainbowWithGlitter,     "Rainbow With Glitter" },
+  { rainbowSolid,           "Solid Rainbow" },
+  { confetti,               "Confetti" },
+  { sinelon,                "Sinelon" },
+  { bpm,                    "Beat" },
+  { juggle,                 "Juggle" },
+};
+
+
+void setup()
+{
+    FastLED.addLeds<WS2812, LED_PIN>(leds, NUM_LEDS);
+    FastLED.setCorrection(Typical8mmPixel);
+    FastLED.setBrightness(brightness);
+    FastLED.setDither(false);
+    fill_solid(leds, NUM_LEDS, CRGB::Black);
+    FastLED.show();
+
+    // Serial.begin(9600);
+
+    // load settings from EEPROM
+    brightness = 200;//EEPROM.read(0);
+    if(brightness < 1)
+      brightness = 1;
+    else if(brightness > 255)
+      brightness = 255;
+
+    FastLED.setBrightness(brightness);
+    FastLED.setDither(brightness < 255);
+
+    patternCount = ARRAY_SIZE(patterns);
+
+    patternIndex = 0;//EEPROM.read(1);
+    if(patternIndex < 0)
+      patternIndex = 0;
+    else if (patternIndex >= patternCount)
+      patternIndex = patternCount - 1;
+
+    r = 0;//EEPROM.read(2);
+    g = 0;//EEPROM.read(3);
+    b = 0;//EEPROM.read(4);
+
+    if(r == 0 && g == 0 && b == 0) {
+      r = 0;
+      g = 0;
+      b = 255;
+    }
+
+    solidColor = CRGB(r, b, g);
+}
+
+void loop()
+{
+    if(power < 1) {
+        fill_solid(leds, NUM_LEDS, CRGB::Black);
+        FastLED.show();
+        FastLED.delay(15);
+        return;
+    }
+
+    uint8_t delay = patterns[patternIndex].drawFrame();
+
+    // send the 'leds' array out to the actual LED strip
+    FastLED.show();
+
+    // insert a delay to keep the framerate modest
+    FastLED.delay(delay);
+
+    // blend the current palette to the next
+    EVERY_N_MILLISECONDS(40) {
+        nblendPaletteTowardPalette(currentPalette, targetPalette, 16);
+    }
+
+    EVERY_N_MILLISECONDS( 40 ) { gHue++; } // slowly cycle the "base color" through the rainbow/palette
+
+    // slowly change to a new palette
+    EVERY_N_SECONDS(SECONDS_PER_PALETTE) {
+      paletteIndex++;
+      if (paletteIndex >= paletteCount) paletteIndex = 0;
+      targetPalette = palettes[paletteIndex];
+    };
+
+    EVERY_N_SECONDS(SECONDS_PER_PATTERN) {
+      patternIndex++;
+      if (patternIndex >= patternCount) patternIndex = 0;
+    }
 }
 
 void brightenOrDarkenEachPixel( fract8 fadeUpAmount, fract8 fadeDownAmount)
