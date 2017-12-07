@@ -17,6 +17,7 @@
  */
 
 #include "FastLED.h"
+#include "Bounce2.h"
 FASTLED_USING_NAMESPACE;
 
 #include "GradientPalettes.h"
@@ -26,14 +27,12 @@ extern char* itoa(int a, char* buffer, unsigned char radix);
 
 #define ARRAY_SIZE(A) (sizeof(A) / sizeof((A)[0]))
 
-#define ONE_DAY_MILLIS (24 * 60 * 60 * 1000)
-
-#define NUM_LEDS 50
-#define LED_PIN  11
-
-static const int numLeds = NUM_LEDS;
+#define NUM_LEDS 100
+#define LED_PIN  6
+#define BUTTON_PIN 2
 
 CRGB leds[NUM_LEDS];
+Bounce nextButton;
 
 extern const TProgmemRGBGradientPalettePtr gGradientPalettes[];
 extern const uint8_t gGradientPaletteCount;
@@ -47,29 +46,19 @@ CRGBPalette16 gTargetPalette( gGradientPalettes[0] );
 #include "TwinkleFOX.h"
 
 typedef uint8_t (*SimplePattern)();
-typedef SimplePattern SimplePatternList[];
 typedef struct { SimplePattern drawFrame;  String name; } PatternAndName;
 typedef PatternAndName PatternAndNameList[];
 
 
 int patternCount = 0;
-
-
-// variables exposed via Particle cloud API (Spark Core is limited to 10)
-int brightness = 32;
 int patternIndex = 0;
-int power = 1;
-int r = 0;
-int g = 0;
-int b = 255;
 
 uint8_t gHue = 0; // rotating "base color" used by many of the patterns
 
-CRGB solidColor = CRGB(r, g, b);
+CRGB solidColor = CRGB::Blue;
 
 CRGBPalette16 IceColors_p = CRGBPalette16(CRGB::Black, CRGB::Blue, CRGB::Aqua, CRGB::White);
 
-uint8_t paletteIndex = 0;
 
 // List of palettes to cycle through.
 CRGBPalette16 palettes[] =
@@ -88,6 +77,7 @@ CRGBPalette16 palettes[] =
 uint8_t paletteCount = ARRAY_SIZE(palettes);
 
 CRGBPalette16 currentPalette(CRGB::Black);
+uint8_t paletteIndex = 0;
 CRGBPalette16 targetPalette = palettes[paletteIndex];
 
 // ten seconds per color palette makes a good demo
@@ -436,81 +426,52 @@ const PatternAndNameList patterns =
 
 void setup()
 {
-    FastLED.addLeds<WS2812, LED_PIN>(leds, NUM_LEDS);
-    FastLED.setCorrection(Typical8mmPixel);
-    FastLED.setBrightness(brightness);
-    FastLED.setDither(false);
-    fill_solid(leds, NUM_LEDS, CRGB::Black);
-    FastLED.show();
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
+  nextButton.attach(BUTTON_PIN);
+  nextButton.interval(5);
 
-    // Serial.begin(9600);
+  FastLED.addLeds<WS2812, LED_PIN>(leds, NUM_LEDS);
+  FastLED.setCorrection(TypicalSMD5050);//Typical8mmPixel);
+  fill_solid(leds, NUM_LEDS, CRGB::Black);
+  FastLED.show();
 
-    // load settings from EEPROM
-    brightness = 200;//EEPROM.read(0);
-    if(brightness < 1)
-      brightness = 1;
-    else if(brightness > 255)
-      brightness = 255;
+  FastLED.setBrightness(200);
+  FastLED.setDither(true);
 
-    FastLED.setBrightness(brightness);
-    FastLED.setDither(brightness < 255);
-
-    patternCount = ARRAY_SIZE(patterns);
-
-    patternIndex = 0;//EEPROM.read(1);
-    if(patternIndex < 0)
-      patternIndex = 0;
-    else if (patternIndex >= patternCount)
-      patternIndex = patternCount - 1;
-
-    r = 0;//EEPROM.read(2);
-    g = 0;//EEPROM.read(3);
-    b = 0;//EEPROM.read(4);
-
-    if(r == 0 && g == 0 && b == 0) {
-      r = 0;
-      g = 0;
-      b = 255;
-    }
-
-    solidColor = CRGB(r, b, g);
+  patternCount = ARRAY_SIZE(patterns);
+  patternIndex = 0;
 }
 
-void loop()
-{
-    if(power < 1) {
-        fill_solid(leds, NUM_LEDS, CRGB::Black);
-        FastLED.show();
-        FastLED.delay(15);
-        return;
-    }
+void loop() {
 
-    uint8_t delay = patterns[patternIndex].drawFrame();
+  uint8_t delay = patterns[patternIndex].drawFrame();
 
-    // send the 'leds' array out to the actual LED strip
-    FastLED.show();
+  // send the 'leds' array out to the actual LED strip
+  FastLED.show();
 
-    // insert a delay to keep the framerate modest
-    FastLED.delay(delay);
+  // insert a delay to keep the framerate modest
+  FastLED.delay(delay);
 
-    // blend the current palette to the next
-    EVERY_N_MILLISECONDS(40) {
-        nblendPaletteTowardPalette(currentPalette, targetPalette, 16);
-    }
 
-    EVERY_N_MILLISECONDS( 40 ) { gHue++; } // slowly cycle the "base color" through the rainbow/palette
+  // blend the current palette to the next
+  EVERY_N_MILLISECONDS(40) {
+    nblendPaletteTowardPalette(currentPalette, targetPalette, 16);
+  }
 
-    // slowly change to a new palette
-    EVERY_N_SECONDS(SECONDS_PER_PALETTE) {
-      paletteIndex++;
-      if (paletteIndex >= paletteCount) paletteIndex = 0;
-      targetPalette = palettes[paletteIndex];
-    };
+  EVERY_N_MILLISECONDS( 40 ) { gHue++; } // slowly cycle the "base color" through the rainbow/palette
 
-    EVERY_N_SECONDS(SECONDS_PER_PATTERN) {
-      patternIndex++;
-      if (patternIndex >= patternCount) patternIndex = 0;
-    }
+  // slowly change to a new palette
+  EVERY_N_SECONDS(SECONDS_PER_PALETTE) {
+    paletteIndex = (paletteIndex + 1) % paletteCount;
+    targetPalette = palettes[paletteIndex];
+  };
+
+  EVERY_N_SECONDS(SECONDS_PER_PATTERN) {
+    patternIndex = (patternIndex + 1) % patternCount;
+  }
+  if (nextButton.update() && nextButton.fell()) {
+    patternIndex = (patternIndex + 1) % patternCount;
+  }
 }
 
 void brightenOrDarkenEachPixel( fract8 fadeUpAmount, fract8 fadeDownAmount)
